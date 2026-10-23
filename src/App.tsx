@@ -38,6 +38,7 @@ import {
   YoutubeQueryItem,
   BlueprintMicroConcept,
   ExpandedMicroConceptChunk,
+  RelatedGraphOption,
 } from "./data/syllabus";
 import {
   MathFormula,
@@ -56,6 +57,7 @@ import { GatekeeperScreen } from "./components/GatekeeperScreen";
 import {
   fetchStudyBlueprint,
   fetchMicroConceptExpansion,
+  fetchRelatedGraphs,
   fetchPlotlyModel,
   fetchConceptVideos,
   fetchSubtopicPyqs,
@@ -90,6 +92,9 @@ interface StoredProfileData {
   pinnedInlineTutor: PinnedInlineTutorItem[];
   cachedNotes: Record<string, StudyNoteData>;
   cachedModels: Record<string, PlotlyEconomicModel>;
+  relatedGraphsByTopic?: Record<string, RelatedGraphOption[]>;
+  cachedModelsByGraphId?: Record<string, Record<string, PlotlyEconomicModel>>;
+  selectedGraphIdByTopic?: Record<string, string>;
   cachedYoutube: Record<string, YoutubeQueryItem[]>;
   chatHistory: Record<string, ChatMessage[]>;
   updatedAt: string;
@@ -249,6 +254,25 @@ export default function App() {
   );
   const [cachedModels, setCachedModels] = useState<
     Record<string, PlotlyEconomicModel>
+  >({});
+  const [relatedGraphsByTopic, setRelatedGraphsByTopic] = useState<
+    Record<string, RelatedGraphOption[]>
+  >({
+    [SYLLABUS_TREE[0].chapters[0].subtopics[0]]:
+      DEFAULT_SEED_NOTES[SYLLABUS_TREE[0].chapters[0].subtopics[0]]
+        .relatedGraphs || [],
+  });
+  const [cachedModelsByGraphId, setCachedModelsByGraphId] = useState<
+    Record<string, Record<string, PlotlyEconomicModel>>
+  >({});
+  const [selectedGraphIdByTopic, setSelectedGraphIdByTopic] = useState<
+    Record<string, string>
+  >({});
+  const [generatingGraphIdByTopic, setGeneratingGraphIdByTopic] = useState<
+    Record<string, string | null>
+  >({});
+  const [discoveringMenuByTopic, setDiscoveringMenuByTopic] = useState<
+    Record<string, boolean>
   >({});
   const [cachedYoutube, setCachedYoutube] = useState<
     Record<string, YoutubeQueryItem[]>
@@ -455,7 +479,15 @@ export default function App() {
               const hasFullPyqBank =
                 (existing?.practiceQuestions?.length || 0) >=
                 seedVal.practiceQuestions.length;
-              if (!existing || !hasFeynmanTraps || !hasFullPyqBank) {
+              const hasRelatedGraphs =
+                Array.isArray(existing?.relatedGraphs) &&
+                existing.relatedGraphs.length > 0;
+              if (
+                !existing ||
+                !hasFeynmanTraps ||
+                !hasFullPyqBank ||
+                !hasRelatedGraphs
+              ) {
                 cleanedCache[seedKey] = seedVal;
               }
             }
@@ -464,6 +496,18 @@ export default function App() {
           }
           setCachedNotes(cleanedCache);
           setCachedModels(parsed.cachedModels || {});
+          if (parsed.relatedGraphsByTopic) {
+            setRelatedGraphsByTopic((prev) => ({
+              ...prev,
+              ...parsed.relatedGraphsByTopic,
+            }));
+          }
+          if (parsed.cachedModelsByGraphId) {
+            setCachedModelsByGraphId(parsed.cachedModelsByGraphId);
+          }
+          if (parsed.selectedGraphIdByTopic) {
+            setSelectedGraphIdByTopic(parsed.selectedGraphIdByTopic);
+          }
           setCachedYoutube(parsed.cachedYoutube || {});
           setChatHistory(parsed.chatHistory || {});
         } catch {
@@ -486,6 +530,9 @@ export default function App() {
       pinnedInlineTutor,
       cachedNotes,
       cachedModels,
+      relatedGraphsByTopic,
+      cachedModelsByGraphId,
+      selectedGraphIdByTopic,
       cachedYoutube,
       chatHistory,
       updatedAt: new Date().toISOString(),
@@ -504,6 +551,9 @@ export default function App() {
     pinnedInlineTutor,
     cachedNotes,
     cachedModels,
+    relatedGraphsByTopic,
+    cachedModelsByGraphId,
+    selectedGraphIdByTopic,
     cachedYoutube,
     chatHistory,
   ]);
@@ -899,6 +949,14 @@ export default function App() {
               message: "No standard economic graph is required for this concept.",
             },
           }));
+        } else if (
+          Array.isArray(blueprintData.relatedGraphs) &&
+          blueprintData.relatedGraphs.length > 0
+        ) {
+          setRelatedGraphsByTopic((prev) => ({
+            ...prev,
+            [subtopic]: blueprintData.relatedGraphs,
+          }));
         }
 
         // PASS 2: Map the Blueprint micro-concepts to concurrent API promises and execute simultaneously via Promise.allSettled
@@ -1006,6 +1064,9 @@ export default function App() {
             : [],
           expandedChunks: orderedChunks,
           isGraphCanonical: blueprintData.isGraphCanonical,
+          relatedGraphs: Array.isArray(blueprintData.relatedGraphs)
+            ? blueprintData.relatedGraphs
+            : [],
           youtubeQueries: cachedYoutube[subtopic] || [],
           generatedAt: new Date().toLocaleTimeString([], {
             hour: "2-digit",
@@ -1038,11 +1099,214 @@ export default function App() {
     [geminiApiKey, cachedYoutube, showNotification]
   );
 
-  // 2. On-Demand Textbook Economic Graph Generator (Scoped by subtopicId)
+  // 2A. Contextual Graph Menu Discovery Handler (Scoped by subtopicId)
+  const handleDiscoverRelatedGraphs = useCallback(async () => {
+    const targetUnit = selectedUnit;
+    const targetChapter = selectedChapter;
+    const targetSubtopic = selectedSubtopic;
+
+    setDiscoveringMenuByTopic((prev) => ({ ...prev, [targetSubtopic]: true }));
+    setModelErrorByTopic((prev) => ({ ...prev, [targetSubtopic]: null }));
+
+    try {
+      const result = await fetchRelatedGraphs(
+        targetUnit,
+        targetChapter,
+        targetSubtopic,
+        geminiApiKey
+      );
+
+      if (result.isGraphCanonical === false || !Array.isArray(result.relatedGraphs) || result.relatedGraphs.length === 0) {
+        setCachedModels((prev) => ({
+          ...prev,
+          [targetSubtopic]: {
+            isGraphCanonical: false,
+            message:
+              result.message ||
+              "No standard economic graph is required for this concept.",
+          },
+        }));
+        setRelatedGraphsByTopic((prev) => ({ ...prev, [targetSubtopic]: [] }));
+        showNotification("No canonical textbook graph required for this concept");
+        return;
+      }
+
+      setRelatedGraphsByTopic((prev) => ({
+        ...prev,
+        [targetSubtopic]: result.relatedGraphs,
+      }));
+      setCachedNotes((prev) => {
+        const existing = prev[targetSubtopic];
+        if (!existing) return prev;
+        return {
+          ...prev,
+          [targetSubtopic]: {
+            ...existing,
+            isGraphCanonical: true,
+            relatedGraphs: result.relatedGraphs,
+          },
+        };
+      });
+      showNotification(
+        `Identified ${result.relatedGraphs.length} CUET PG textbook models in Related Graphs menu`
+      );
+    } catch (err: any) {
+      setModelErrorByTopic((prev) => ({
+        ...prev,
+        [targetSubtopic]:
+          err?.message || "Failed to discover related graphs for this lesson.",
+      }));
+    } finally {
+      setDiscoveringMenuByTopic((prev) => {
+        const next = { ...prev };
+        delete next[targetSubtopic];
+        return next;
+      });
+    }
+  }, [geminiApiKey, selectedUnit, selectedChapter, selectedSubtopic, showNotification]);
+
+  // 2B. On-Demand Selected Graph Option Renderer (Persistent Options + Instant Switch if Cached)
+  const handleSelectGraphOption = useCallback(
+    async (option: RelatedGraphOption, forceRegenerate = false) => {
+      const targetUnit = selectedUnit;
+      const targetChapter = selectedChapter;
+      const targetSubtopic = selectedSubtopic;
+
+      setSelectedGraphIdByTopic((prev) => ({
+        ...prev,
+        [targetSubtopic]: option.id,
+      }));
+      setModelErrorByTopic((prev) => ({ ...prev, [targetSubtopic]: null }));
+      setLastShiftNote(undefined);
+
+      const existingCached = cachedModelsByGraphId[targetSubtopic]?.[option.id];
+      if (existingCached && existingCached.isGraphCanonical && !forceRegenerate) {
+        const defaults: SliderValuesMap = {};
+        if (Array.isArray(existingCached.parameterSliders)) {
+          for (const s of existingCached.parameterSliders) {
+            defaults[s.id] = s.defaultValue;
+          }
+        }
+        setCachedModels((prev) => ({
+          ...prev,
+          [targetSubtopic]: existingCached,
+        }));
+        setSliderValuesByTopic((prev) => ({
+          ...prev,
+          [targetSubtopic]: defaults,
+        }));
+        showNotification(`Switched to plotted graph: ${option.title}`);
+        return;
+      }
+
+      setGeneratingModelByTopic((prev) => ({ ...prev, [targetSubtopic]: true }));
+      setGeneratingGraphIdByTopic((prev) => ({
+        ...prev,
+        [targetSubtopic]: option.id,
+      }));
+
+      try {
+        const data: PlotlyEconomicModel = await fetchPlotlyModel(
+          targetUnit,
+          targetChapter,
+          targetSubtopic,
+          geminiApiKey,
+          option
+        );
+
+        if (data.isGraphCanonical === false) {
+          const nonCanonicalPayload: PlotlyEconomicModel = {
+            isGraphCanonical: false,
+            message:
+              data.message ||
+              "No standard economic graph is required for this concept.",
+          };
+          setCachedModels((prev) => ({
+            ...prev,
+            [targetSubtopic]: nonCanonicalPayload,
+          }));
+          showNotification("No canonical graph required for this concept");
+          return;
+        }
+
+        const modelWithTime: PlotlyEconomicModel = {
+          ...data,
+          graphId: option.id,
+          isGraphCanonical: true,
+          generatedAt: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        };
+
+        const defaults: SliderValuesMap = {};
+        if (Array.isArray(modelWithTime.parameterSliders)) {
+          for (const s of modelWithTime.parameterSliders) {
+            defaults[s.id] = s.defaultValue;
+          }
+        }
+
+        setCachedModels((prev) => ({
+          ...prev,
+          [targetSubtopic]: modelWithTime,
+        }));
+        setCachedModelsByGraphId((prev) => ({
+          ...prev,
+          [targetSubtopic]: {
+            ...(prev[targetSubtopic] || {}),
+            [option.id]: modelWithTime,
+          },
+        }));
+        setSliderValuesByTopic((prev) => ({
+          ...prev,
+          [targetSubtopic]: defaults,
+        }));
+        showNotification(`Plotted: ${option.title}`);
+      } catch (err: any) {
+        setModelErrorByTopic((prev) => ({
+          ...prev,
+          [targetSubtopic]:
+            err?.message || "Failed to generate selected graph model.",
+        }));
+      } finally {
+        setGeneratingModelByTopic((prev) => {
+          const next = { ...prev };
+          delete next[targetSubtopic];
+          return next;
+        });
+        setGeneratingGraphIdByTopic((prev) => ({
+          ...prev,
+          [targetSubtopic]: null,
+        }));
+      }
+    },
+    [
+      geminiApiKey,
+      selectedUnit,
+      selectedChapter,
+      selectedSubtopic,
+      cachedModelsByGraphId,
+      showNotification,
+    ]
+  );
+
+  // 2C. Quick-Plot Fallback Generator (Scoped by subtopicId)
   const handleGeneratePlotlyModel = useCallback(async () => {
     const targetUnit = selectedUnit;
     const targetChapter = selectedChapter;
     const targetSubtopic = selectedSubtopic;
+
+    const existingMenu =
+      relatedGraphsByTopic[targetSubtopic] ||
+      cachedNotes[targetSubtopic]?.relatedGraphs ||
+      [];
+    if (existingMenu.length > 0) {
+      const targetOption =
+        existingMenu.find((g) => g.id === selectedGraphIdByTopic[targetSubtopic]) ||
+        existingMenu[0];
+      await handleSelectGraphOption(targetOption, true);
+      return;
+    }
 
     setGeneratingModelByTopic((prev) => ({ ...prev, [targetSubtopic]: true }));
     setModelErrorByTopic((prev) => ({ ...prev, [targetSubtopic]: null }));
@@ -1112,7 +1376,17 @@ export default function App() {
         return next;
       });
     }
-  }, [geminiApiKey, selectedUnit, selectedChapter, selectedSubtopic, showNotification]);
+  }, [
+    geminiApiKey,
+    selectedUnit,
+    selectedChapter,
+    selectedSubtopic,
+    relatedGraphsByTopic,
+    cachedNotes,
+    selectedGraphIdByTopic,
+    handleSelectGraphOption,
+    showNotification,
+  ]);
 
   const handleDeleteModelCache = useCallback(() => {
     setCachedModels((prev) => {
@@ -1120,8 +1394,18 @@ export default function App() {
       delete next[selectedSubtopic];
       return next;
     });
+    setCachedModelsByGraphId((prev) => {
+      const next = { ...prev };
+      delete next[selectedSubtopic];
+      return next;
+    });
+    setSelectedGraphIdByTopic((prev) => {
+      const next = { ...prev };
+      delete next[selectedSubtopic];
+      return next;
+    });
     setLastShiftNote(undefined);
-    showNotification("Deleted cached interactive model");
+    showNotification("Cleared cached graphs for this topic");
   }, [selectedSubtopic, showNotification]);
 
   // 3. Smart YouTube Concept Videos Toggle & On-Demand Caching (Scoped by subtopicId)
@@ -1418,6 +1702,21 @@ export default function App() {
   };
 
   const activeNote: StudyNoteData | undefined = cachedNotes[selectedSubtopic];
+  const activeRelatedGraphs: RelatedGraphOption[] = useMemo(
+    () =>
+      relatedGraphsByTopic[selectedSubtopic] ||
+      activeNote?.relatedGraphs ||
+      [],
+    [relatedGraphsByTopic, selectedSubtopic, activeNote]
+  );
+  const activeSelectedGraphId: string | null =
+    selectedGraphIdByTopic[selectedSubtopic] || null;
+  const activeGeneratingGraphId: string | null =
+    generatingGraphIdByTopic[selectedSubtopic] || null;
+  const isDiscoveringMenu: boolean =
+    Boolean(discoveringMenuByTopic[selectedSubtopic]);
+  const activeCachedTopicModels: Record<string, PlotlyEconomicModel> =
+    cachedModelsByGraphId[selectedSubtopic] || {};
   const activeModel: PlotlyEconomicModel | undefined =
     cachedModels[selectedSubtopic];
   const activeSliderValues: SliderValuesMap = useMemo(() => {
@@ -4016,11 +4315,16 @@ export default function App() {
               </>
             )}
 
-            {/* On-Demand Plotly.js Interactive Graph Generator & Real-Time Slider Engine */}
+            {/* On-Demand Plotly.js Interactive Graph Menu & Real-Time Slider Engine */}
             <InteractiveEconLab
               unit={selectedUnit}
               chapter={selectedChapter}
               subtopic={selectedSubtopic}
+              relatedGraphs={activeRelatedGraphs}
+              selectedGraphId={activeSelectedGraphId}
+              generatingGraphId={activeGeneratingGraphId}
+              isDiscoveringMenu={isDiscoveringMenu}
+              cachedTopicModels={activeCachedTopicModels}
               model={activeModel}
               sliderValues={activeSliderValues}
               onChangeSliderValues={(next) =>
@@ -4031,6 +4335,8 @@ export default function App() {
               }
               isGeneratingModel={isGeneratingModel}
               modelError={modelError}
+              onSelectGraphOption={handleSelectGraphOption}
+              onDiscoverRelatedGraphs={handleDiscoverRelatedGraphs}
               onGenerateModel={handleGeneratePlotlyModel}
               onDeleteModelCache={handleDeleteModelCache}
               isLightMode={isLightMode}

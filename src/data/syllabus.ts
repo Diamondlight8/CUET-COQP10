@@ -36,6 +36,14 @@ export interface ExpandedMicroConceptChunk {
   keyPoints: string[];
 }
 
+export interface RelatedGraphOption {
+  id: string;
+  title: string;
+  textbookReference: string;
+  shortDescription: string;
+  pyqFocus: string;
+}
+
 export interface StudyNoteData {
   overview: string;
   derivations: DerivationItem[];
@@ -45,6 +53,7 @@ export interface StudyNoteData {
   youtubeQueries: YoutubeQueryItem[];
   expandedChunks?: ExpandedMicroConceptChunk[];
   isGraphCanonical?: boolean;
+  relatedGraphs?: RelatedGraphOption[];
   generatedAt?: string;
 }
 
@@ -468,6 +477,37 @@ export const DEFAULT_SEED_NOTES: Record<string, StudyNoteData> = {
         channelHint: "Microeconomic Theory Prep",
         searchQuery: "Bandwagon effect Snob effect Giffen good microeconomics graphical analysis",
         durationFocus: "25 min concept review"
+      }
+    ],
+    isGraphCanonical: true,
+    relatedGraphs: [
+      {
+        id: "graph_linear_demand_mr_elasticity",
+        title: "Linear Inverse Demand, MR & Point Elasticity Zones",
+        textbookReference: "Hal R. Varian — Intermediate Microeconomics (Ch. 15)",
+        shortDescription: "Plots linear inverse demand P(Q) = a - bQ alongside Marginal Revenue MR(Q) = a - 2bQ, illustrating the elastic (|e| > 1), unit-elastic midpoint (|e| = 1), and inelastic (|e| < 1) zones.",
+        pyqFocus: "CUET PG 2023 & 2024 PYQ: Midpoint unit elasticity where MR = 0 and Amoroso-Robinson relation."
+      },
+      {
+        id: "graph_horizontal_summation_kink",
+        title: "Market Demand Horizontal Summation & Kink Point",
+        textbookReference: "A. Koutsoyiannis — Modern Microeconomics / Varian (Ch. 15)",
+        shortDescription: "Shows individual demand curves q₁(P) and q₂(P) with distinct choke prices and the resulting aggregate market demand curve Q_M(P) featuring a prominent kink where the second consumer enters.",
+        pyqFocus: "CUET PG 2022 & 2025 PYQ: Identifying the exact price coordinate where aggregate market demand kinks."
+      },
+      {
+        id: "graph_bandwagon_vs_snob",
+        title: "Leibenstein Network Externalities: Bandwagon vs. Snob Demand",
+        textbookReference: "Harvey Leibenstein (1950) & Pindyck-Rubinfeld Microeconomics",
+        shortDescription: "Compares pure individual demand against the flatter (more elastic) Bandwagon market demand curve and the steeper (less elastic) Snob market demand curve.",
+        pyqFocus: "CUET PG 2021 & 2023 PYQ: Relative slope and price elasticity of Bandwagon vs. Snob vs. Veblen goods."
+      },
+      {
+        id: "graph_constant_elasticity_hyperbola",
+        title: "Iso-Elastic (Constant Elasticity) Rectangular Hyperbola Demand",
+        textbookReference: "Sydsaeter & Hammond / Varian — Constant Elasticity Demand",
+        shortDescription: "Plots the iso-elastic demand curve Q = A·P⁻ᵉ (rectangular hyperbola when e = 1) where total expenditure P·Q remains invariant along the entire curve.",
+        pyqFocus: "CUET PG 2024 & 2025 PYQ: Log-linear demand ln(Q) = α - β·ln(P) vs. linear slope."
       }
     ]
   }

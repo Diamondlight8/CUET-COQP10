@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import {
   BlueprintMicroConcept,
   ExpandedMicroConceptChunk,
+  RelatedGraphOption,
   YoutubeQueryItem,
 } from "../data/syllabus";
 import { PlotlyEconomicModel } from "../components/InteractiveEconLab";
@@ -93,7 +94,10 @@ export async function fetchStudyBlueprint(
      - Part 1 (First 8 items): category: "pyq", examTag across 2021-2025 ("CUET PG 2025 (COQP10) · PYQ", etc.), and conceptTested.
      - Part 2 (Next 3 items): category: "verification", examTag ("Concept Check #1 · Topic Verification", etc.), and conceptTested.
    - Each with 4 options, correctIndex (0-3), and intuitive solution.
-7. **"isGraphCanonical":** True ONLY if a canonical textbook economic/statistical graph genuinely exists for this exact subtopic.`;
+7. **"isGraphCanonical":** True ONLY if standard textbook economic/statistical graphs genuinely exist for this exact subtopic.
+8. **"relatedGraphs" (CONTEXTUAL CUET PG GRAPH MENU):**
+   - If "isGraphCanonical" is true, return 3 to 4 distinct textbook economic models/graphs tested in CUET PG (COQP10) PYQs for "${subtopic}" (citing Varian, Froyen, Blanchard, Koutsoyiannis, Romer/Solow, Musgrave, or Gujarati).
+   - If false, return [].`;
 
   const response = await ai.models.generateContent({
     model: "gemini-3.8-flash",
@@ -148,6 +152,26 @@ export async function fetchStudyBlueprint(
             },
           },
           isGraphCanonical: { type: Type.BOOLEAN },
+          relatedGraphs: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                title: { type: Type.STRING },
+                textbookReference: { type: Type.STRING },
+                shortDescription: { type: Type.STRING },
+                pyqFocus: { type: Type.STRING },
+              },
+              required: [
+                "id",
+                "title",
+                "textbookReference",
+                "shortDescription",
+                "pyqFocus",
+              ],
+            },
+          },
         },
         required: [
           "microConcepts",
@@ -155,6 +179,7 @@ export async function fetchStudyBlueprint(
           "examTraps",
           "practiceQuestions",
           "isGraphCanonical",
+          "relatedGraphs",
         ],
       },
     },
@@ -253,12 +278,101 @@ export async function fetchMicroConceptExpansion(params: {
   };
 }
 
-// 2. Interactive Economic Graph Generator
-export async function fetchPlotlyModel(
+// 2A. Contextual Graph Menu Discovery (CUET PG COQP10 Benchmark)
+export async function fetchRelatedGraphs(
   unit: string,
   chapter: string,
   subtopic: string,
   apiKey: string
+): Promise<{
+  isGraphCanonical: boolean;
+  message?: string;
+  relatedGraphs: RelatedGraphOption[];
+}> {
+  try {
+    const res = await fetch("/api/related-graphs", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-gemini-api-key": apiKey,
+      },
+      body: JSON.stringify({ unit, chapter, subtopic }),
+    });
+
+    if (res.status !== 404) {
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load contextual graph menu.");
+      return data;
+    }
+  } catch (err: any) {
+    if (err.message && (err.message.includes("401") || err.message.includes("API key"))) {
+      throw err;
+    }
+  }
+
+  // Client-side fallback for static deployment (GitHub Pages)
+  const ai = getClientGenAI(apiKey);
+  const prompt = `You are a Graduate Economics Professor and CUET PG Economics (COQP10) Past-Paper Specialist.
+Evaluate the following lesson and identify all canonical textbook economic/statistical models or graphs that apply:
+- Unit: ${unit}
+- Chapter: ${chapter}
+- Sub-topic: ${subtopic}
+
+### STRICT CUET PG (COQP10) BENCHMARK RULES:
+1. Determine whether canonical textbook economic or statistical graphs genuinely exist for "${subtopic}".
+   - If NO standard graph applies, set "isGraphCanonical": false, "message": "No standard economic graph is required for this concept.", and "relatedGraphs": [].
+2. If canonical graphs DO apply ("isGraphCanonical": true):
+   - Return 3 to 5 distinct, clickable graph options in "relatedGraphs" that cover the exact geometric models, equilibrium shifts, and special cases tested in **CUET PG Economics (COQP10) PYQs (2021–2025)**.
+   - Benchmark strictly against graduate textbooks: **Hal R. Varian**, **A. Koutsoyiannis**, **Richard Froyen / Olivier Blanchard / Dornbusch & Fischer**, **Solow / Romer**, **Musgrave**, **Salvatore / Krugman**, **Damodar Gujarati / Hogg & Craig**.`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3.8-flash",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          isGraphCanonical: { type: Type.BOOLEAN },
+          message: { type: Type.STRING },
+          relatedGraphs: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                title: { type: Type.STRING },
+                textbookReference: { type: Type.STRING },
+                shortDescription: { type: Type.STRING },
+                pyqFocus: { type: Type.STRING },
+              },
+              required: [
+                "id",
+                "title",
+                "textbookReference",
+                "shortDescription",
+                "pyqFocus",
+              ],
+            },
+          },
+        },
+        required: ["isGraphCanonical", "relatedGraphs"],
+      },
+    },
+  });
+
+  const text = response.text;
+  if (!text) throw new Error("Empty response from Related Graphs menu generator");
+  return JSON.parse(text.trim());
+}
+
+// 2B. On-Demand Selected Economic Graph Generator
+export async function fetchPlotlyModel(
+  unit: string,
+  chapter: string,
+  subtopic: string,
+  apiKey: string,
+  graphOption?: RelatedGraphOption
 ): Promise<PlotlyEconomicModel> {
   try {
     const res = await fetch("/api/generate-plotly-model", {
@@ -267,7 +381,7 @@ export async function fetchPlotlyModel(
         "Content-Type": "application/json",
         "x-gemini-api-key": apiKey,
       },
-      body: JSON.stringify({ unit, chapter, subtopic }),
+      body: JSON.stringify({ unit, chapter, subtopic, graphOption }),
     });
 
     if (res.status !== 404) {
@@ -284,16 +398,27 @@ export async function fetchPlotlyModel(
   // Client-side fallback
   const NEON_PALETTE = ["#00ff9d", "#00e5ff", "#ffbe0b", "#ff2a85", "#a855f7", "#38bdf8"];
   const ai = getClientGenAI(apiKey);
+  const selectedModelDirective = graphOption
+    ? `SELECTED GRAPH OPTION FROM MENU (PLOT ONLY THIS SPECIFIC MODEL):
+- Graph ID: "${graphOption.id}"
+- Selected Graph Title: "${graphOption.title}"
+- Authoritative Textbook Benchmark: "${graphOption.textbookReference}"
+- Target Description: "${graphOption.shortDescription}"
+- CUET PG (COQP10) PYQ Focus: "${graphOption.pyqFocus}"`
+    : `Plot the primary canonical textbook economic graph tested in CUET PG (COQP10) for "${subtopic}".`;
+
   const prompt = `You are a rigorous Graduate Economics Professor for CUET PG Economics (COQP10).
 Evaluate: Unit "${unit}", Chapter "${chapter}", Sub-topic "${subtopic}".
+${selectedModelDirective}
 
 1. STRICT NECESSITY GATEWAY:
-- Determine whether a canonical textbook economic/statistical graph genuinely exists.
-- If NO standard graph applies, set isGraphCanonical: false, message: "No standard economic graph is required for this concept."
-2. TEXTBOOK ANCHORING: If true, cite authoritative model under modelReference.
-3. ADAPTIVE COMPLEXITY: Default to simple and static (line/bar/scatter). Include parameterSliders ONLY if dynamic comparative statics are essential.
-4. COLORS: Use high contrast neon hex colors: ${NEON_PALETTE.join(", ")}.
-5. Strictly English only.`;
+- If NO standard graph applies and no graphOption was requested, set isGraphCanonical: false, message: "No standard economic graph is required for this concept."
+2. CUET PG (COQP10) TEXTBOOK ALIGNMENT & EQUILIBRIUM TRACES:
+- Reflect the exact variables, functional forms, and equilibrium intersections from Varian, Froyen, Blanchard, Koutsoyiannis, Romer/Solow, Musgrave, or Gujarati.
+- Populate "equilibriumPoints" with 1 to 3 exact coordinates (e.g., E₀, E₁) on the curves.
+3. MANDATORY EMBEDDED EXPLANATION ("embeddedExplanation"):
+- Provide 4 detailed sections with inline LaTeX ($...$): "axesAndVariables", "curveMovements", "equilibriumAndShifts", and "economicSignificance".
+4. COLORS: Use high contrast neon hex colors: ${NEON_PALETTE.join(", ")}. Strictly English only.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-3.8-flash",
@@ -305,7 +430,9 @@ Evaluate: Unit "${unit}", Chapter "${chapter}", Sub-topic "${subtopic}".
         properties: {
           isGraphCanonical: { type: Type.BOOLEAN },
           message: { type: Type.STRING },
+          graphId: { type: Type.STRING },
           modelReference: { type: Type.STRING },
+          pyqBenchmark: { type: Type.STRING },
           chartType: { type: Type.STRING },
           hasComparativeStaticsSliders: { type: Type.BOOLEAN },
           title: { type: Type.STRING },
@@ -315,6 +442,20 @@ Evaluate: Unit "${unit}", Chapter "${chapter}", Sub-topic "${subtopic}".
           xMin: { type: Type.NUMBER },
           xMax: { type: Type.NUMBER },
           equilibriumLabel: { type: Type.STRING },
+          equilibriumPoints: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                label: { type: Type.STRING },
+                x: { type: Type.NUMBER },
+                y: { type: Type.NUMBER },
+                color: { type: Type.STRING },
+                description: { type: Type.STRING },
+              },
+              required: ["label", "x", "y"],
+            },
+          },
           parameterSliders: {
             type: Type.ARRAY,
             items: {
@@ -356,6 +497,21 @@ Evaluate: Unit "${unit}", Chapter "${chapter}", Sub-topic "${subtopic}".
             },
           },
           comparativeStaticsNote: { type: Type.STRING },
+          embeddedExplanation: {
+            type: Type.OBJECT,
+            properties: {
+              axesAndVariables: { type: Type.STRING },
+              curveMovements: { type: Type.STRING },
+              equilibriumAndShifts: { type: Type.STRING },
+              economicSignificance: { type: Type.STRING },
+            },
+            required: [
+              "axesAndVariables",
+              "curveMovements",
+              "equilibriumAndShifts",
+              "economicSignificance",
+            ],
+          },
         },
         required: ["isGraphCanonical"],
       },
@@ -380,7 +536,15 @@ Evaluate: Unit "${unit}", Chapter "${chapter}", Sub-topic "${subtopic}".
   return {
     ...parsed,
     isGraphCanonical: true,
-    modelReference: parsed.modelReference || `Standard Graduate Economics Model (${subtopic})`,
+    graphId: graphOption?.id || parsed.graphId || "primary_model",
+    modelReference:
+      parsed.modelReference ||
+      graphOption?.textbookReference ||
+      `Standard Graduate Economics Model (${subtopic})`,
+    pyqBenchmark:
+      parsed.pyqBenchmark ||
+      graphOption?.pyqFocus ||
+      "CUET PG Economics (COQP10) Benchmark",
     chartType: parsed.chartType || "line",
     hasComparativeStaticsSliders: sliders.length > 0,
     parameterSliders: sliders,
