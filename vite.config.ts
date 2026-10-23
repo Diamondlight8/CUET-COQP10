@@ -6,7 +6,7 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     // Relative base path ensures assets resolve correctly on GitHub Pages (e.g. https://<user>.github.io/<repo>/)
-    base: process.env.BASE_PATH || './',
+    base: '/CUET-COQP10/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
