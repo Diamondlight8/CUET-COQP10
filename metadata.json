@@ -1,0 +1,6 @@
+{
+  "name": "CUET PG Economics — COQP10",
+  "description": "Distraction-free exam preparation workspace for CUET PG Economics (COQP10) with complete syllabus tracking, KaTeX mathematical derivations, bilingual exam key points, and AI tutor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
