@@ -897,11 +897,11 @@ async function startServer() {
   const httpServer = http.createServer(app);
 
   if (process.env.NODE_ENV !== "production") {
-    const isHmrDisabled = process.env.DISABLE_HMR === "true";
+    // HMR is disabled in AI Studio environment per environment constraints
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: isHmrDisabled ? false : { server: httpServer },
+        hmr: false,
       },
       appType: "spa",
     });

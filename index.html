@@ -3,6 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Suppress benign Vite WebSocket / HMR connection errors in AI Studio iframe environment
+      window.addEventListener('error', function(e) {
+        if (
+          (e.filename && e.filename.includes('@vite/client')) ||
+          (e.message && (e.message.includes('WebSocket') || e.message.includes('createWebSocketModuleRunnerTransport')))
+        ) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return true;
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(e) {
+        var str = String(e.reason || '') + ' ' + String(e.reason?.stack || '');
+        if (str.includes('WebSocket') || str.includes('@vite/client') || str.includes('createWebSocketModuleRunnerTransport')) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      }, true);
+    </script>
     <title>CUET PG Economics — COQP10</title>
     <meta name="description" content="Distraction-free exam preparation workspace for CUET PG Economics (COQP10) with complete syllabus tracking, KaTeX mathematical derivations, authentic multi-year PYQs (2021-2025), and interactive Plotly economic models." />
     <meta property="og:title" content="CUET PG Economics — COQP10" />
