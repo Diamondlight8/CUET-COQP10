@@ -4,24 +4,90 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
-      // Suppress benign Vite WebSocket / HMR connection errors in AI Studio iframe environment
-      window.addEventListener('error', function(e) {
-        if (
-          (e.filename && e.filename.includes('@vite/client')) ||
-          (e.message && (e.message.includes('WebSocket') || e.message.includes('createWebSocketModuleRunnerTransport')))
-        ) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          return true;
+      (function() {
+        var OriginalWebSocket = window.WebSocket;
+        if (OriginalWebSocket) {
+          window.WebSocket = function(url, protocols) {
+            var urlStr = String(url || '');
+            if (protocols === 'vite-hmr' || urlStr.includes('token=') || urlStr.includes('vite') || (!urlStr.includes('http') && protocols)) {
+              var target = new EventTarget();
+              target.url = urlStr;
+              target.readyState = 1;
+              target.protocol = protocols || '';
+              target.extensions = '';
+              target.bufferedAmount = 0;
+              target.binaryType = 'blob';
+              target.send = function() {};
+              target.close = function() {};
+              setTimeout(function() {
+                var ev = new Event('open');
+                target.dispatchEvent(ev);
+                if (typeof target.onopen === 'function') target.onopen(ev);
+              }, 10);
+              return target;
+            }
+            return new OriginalWebSocket(url, protocols);
+          };
+          window.WebSocket.prototype = OriginalWebSocket.prototype;
+          window.WebSocket.CONNECTING = 0;
+          window.WebSocket.OPEN = 1;
+          window.WebSocket.CLOSING = 2;
+          window.WebSocket.CLOSED = 3;
         }
-      }, true);
-      window.addEventListener('unhandledrejection', function(e) {
-        var str = String(e.reason || '') + ' ' + String(e.reason?.stack || '');
-        if (str.includes('WebSocket') || str.includes('@vite/client') || str.includes('createWebSocketModuleRunnerTransport')) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-        }
-      }, true);
+
+        var origConsoleError = console.error;
+        console.error = function() {
+          var firstArg = arguments[0];
+          if (typeof firstArg === 'string' && (
+            firstArg.includes('[vite]') ||
+            firstArg.includes('WebSocket') ||
+            firstArg.includes('createWebSocketModuleRunnerTransport') ||
+            firstArg.includes('WebSocket closed without opened')
+          )) {
+            return;
+          }
+          return origConsoleError.apply(console, arguments);
+        };
+
+        var origConsoleWarn = console.warn;
+        console.warn = function() {
+          var firstArg = arguments[0];
+          if (typeof firstArg === 'string' && (
+            firstArg.includes('[vite]') ||
+            firstArg.includes('WebSocket') ||
+            firstArg.includes('createWebSocketModuleRunnerTransport') ||
+            firstArg.includes('WebSocket closed without opened')
+          )) {
+            return;
+          }
+          return origConsoleWarn.apply(console, arguments);
+        };
+
+        window.addEventListener('error', function(e) {
+          var msg = (e.message || '') + ' ' + (e.filename || '');
+          if (
+            msg.includes('@vite/client') ||
+            msg.includes('WebSocket') ||
+            msg.includes('createWebSocketModuleRunnerTransport')
+          ) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(e) {
+          var str = String(e.reason || '') + ' ' + String(e.reason?.stack || '');
+          if (
+            str.includes('WebSocket') ||
+            str.includes('@vite/client') ||
+            str.includes('createWebSocketModuleRunnerTransport')
+          ) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+      })();
     </script>
     <title>CUET PG Economics — COQP10</title>
     <meta name="description" content="Distraction-free exam preparation workspace for CUET PG Economics (COQP10) with complete syllabus tracking, KaTeX mathematical derivations, authentic multi-year PYQs (2021-2025), and interactive Plotly economic models." />
