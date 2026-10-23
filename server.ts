@@ -12,9 +12,29 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
 
-function getGenAIClient() {
+function extractApiKey(req: express.Request): string | null {
+  const headerKey = req.headers["x-gemini-api-key"];
+  if (typeof headerKey === "string" && headerKey.trim()) {
+    return headerKey.trim();
+  }
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const bearerKey = authHeader.slice(7).trim();
+    if (bearerKey) return bearerKey;
+  }
+  if (req.body && typeof req.body.apiKey === "string" && req.body.apiKey.trim()) {
+    return req.body.apiKey.trim();
+  }
+  return null;
+}
+
+function getGenAIClient(apiKeyParam?: string | null) {
+  const apiKey = apiKeyParam?.trim();
+  if (!apiKey) {
+    throw new Error("No Gemini API key provided. Please enter your API key in the Gatekeeper screen.");
+  }
   return new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
+    apiKey: apiKey,
     httpOptions: {
       headers: {
         "User-Agent": "aistudio-build",
@@ -26,13 +46,19 @@ function getGenAIClient() {
 // 1A. Pass 1 ("Blueprint"): Generates the Ordered Micro-Concept Blueprint, Overview, Edge Cases, Practice MCQs & Strict Necessity Graph Gateway
 app.post("/api/study-blueprint", async (req, res) => {
   try {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.status(401).json({ error: "Gemini API key is required. Please set your key in the app." });
+      return;
+    }
+
     const { unit, chapter, subtopic } = req.body;
     if (!subtopic) {
       res.status(400).json({ error: "Subtopic is required" });
       return;
     }
 
-    const ai = getGenAIClient();
+    const ai = getGenAIClient(apiKey);
 
     const prompt = `You are a warm, crystal-clear CUET PG Economics (COQP10) Mentor who uses the **Feynman Technique** to make graduate economics intuitive, memorable, and exam-friendly for stressed aspirants:
 - Unit: ${unit}
@@ -144,13 +170,19 @@ app.post("/api/study-blueprint", async (req, res) => {
 // 1B. Pass 2 ("Concurrent Micro-Concept Expansion"): Expands a single Micro-Concept Chunk in parallel
 app.post("/api/expand-micro-concept", async (req, res) => {
   try {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.status(401).json({ error: "Gemini API key is required. Please set your key in the app." });
+      return;
+    }
+
     const { unit, chapter, subtopic, index, id, title, focusPrompt } = req.body;
     if (!subtopic || !title) {
       res.status(400).json({ error: "Subtopic and micro-concept title are required" });
       return;
     }
 
-    const ai = getGenAIClient();
+    const ai = getGenAIClient(apiKey);
 
     const prompt = `You are a friendly, exam-focused CUET PG Economics (COQP10) Mentor expanding Module #${Number(index) + 1} using the **Feynman Technique**:
 - Unit: ${unit}
@@ -223,13 +255,19 @@ app.post("/api/expand-micro-concept", async (req, res) => {
 // 1C. Single-Call Study Notes Fallback Endpoint
 app.post("/api/study-notes", async (req, res) => {
   try {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.status(401).json({ error: "Gemini API key is required. Please set your key in the app." });
+      return;
+    }
+
     const { unit, chapter, subtopic } = req.body;
     if (!subtopic) {
       res.status(400).json({ error: "Subtopic is required" });
       return;
     }
 
-    const ai = getGenAIClient();
+    const ai = getGenAIClient(apiKey);
 
     const prompt = `You are a warm, crystal-clear CUET PG Economics (COQP10) Mentor who uses the **Feynman Technique** to make graduate economics intuitive, memorable, and exam-friendly:
 - Unit: ${unit}
@@ -349,13 +387,19 @@ app.post("/api/study-notes", async (req, res) => {
 // 1D. On-Demand Sub-Topic PYQ Search & Concept Mastery Verification Generator
 app.post("/api/subtopic-pyqs", async (req, res) => {
   try {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.status(401).json({ error: "Gemini API key is required. Please set your key in the app." });
+      return;
+    }
+
     const { unit, chapter, subtopic, searchQuery } = req.body;
     if (!subtopic) {
       res.status(400).json({ error: "Subtopic is required" });
       return;
     }
 
-    const ai = getGenAIClient();
+    const ai = getGenAIClient(apiKey);
     const filterInstruction = searchQuery
       ? `Focus specifically on questions matching the user's search filter: "${searchQuery}" within "${subtopic}".`
       : `Exhaustively cover ALL CUET PG (COQP10) and CUCET exam question patterns (2021, 2022, 2023, 2024, 2025) across every sub-concept in "${subtopic}" so that nothing is left out.`;
@@ -436,13 +480,19 @@ Generate an **exhaustive, complete set of Sub-Topic PYQs (2021–2025)** and **C
 // 2. On-Demand Economic Graph Generator with Strict Necessity Gateway, Textbook Anchoring & Adaptive Complexity
 app.post("/api/generate-plotly-model", async (req, res) => {
   try {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.status(401).json({ error: "Gemini API key is required. Please set your key in the app." });
+      return;
+    }
+
     const { unit, chapter, subtopic } = req.body;
     if (!subtopic) {
       res.status(400).json({ error: "Subtopic is required" });
       return;
     }
 
-    const ai = getGenAIClient();
+    const ai = getGenAIClient(apiKey);
 
     const NEON_PALETTE = ["#00ff9d", "#00e5ff", "#ffbe0b", "#ff2a85", "#a855f7", "#38bdf8"];
 
@@ -648,13 +698,19 @@ Each item in "curves" can be defined using EITHER:
 // 3. Smart YouTube Concept Caching Endpoint
 app.post("/api/concept-videos", async (req, res) => {
   try {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.status(401).json({ error: "Gemini API key is required. Please set your key in the app." });
+      return;
+    }
+
     const { unit, chapter, subtopic } = req.body;
     if (!subtopic) {
       res.status(400).json({ error: "Subtopic is required" });
       return;
     }
 
-    const ai = getGenAIClient();
+    const ai = getGenAIClient(apiKey);
 
     const prompt = `You are a graduate Economics faculty curator for CUET PG Economics (COQP10).
 Generate exactly 3 highly targeted YouTube search queries specifically targeting the most difficult mathematical derivations, graphical comparative statics, or theoretical nuances of this sub-topic:
@@ -709,13 +765,19 @@ Strictly English only. Make each searchQuery specific enough to surface top univ
 // 4. Contextual Inline Text & Formula Tutor (Strict Context Boundary)
 app.post("/api/inline-tutor", async (req, res) => {
   try {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.status(401).json({ error: "Gemini API key is required. Please set your key in the app." });
+      return;
+    }
+
     const { unit, chapter, subtopic, selectedText, question } = req.body;
     if (!selectedText || !question) {
       res.status(400).json({ error: "Selected text and question are required." });
       return;
     }
 
-    const ai = getGenAIClient();
+    const ai = getGenAIClient(apiKey);
 
     const systemInstruction = `You are an expert CUET PG Economics tutor. You must ONLY answer questions directly related to the active topic: ${subtopic}. If the user asks an unrelated question, gently decline and redirect them to the active concept.
 
@@ -756,13 +818,19 @@ Student's Question about this selection:
 // 5. Persistent Screen Cropper Vision Tutor (Multimodal Base64 Image + Question with Strict Context Boundary)
 app.post("/api/vision-tutor", async (req, res) => {
   try {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.status(401).json({ error: "Gemini API key is required. Please set your key in the app." });
+      return;
+    }
+
     const { unit, chapter, subtopic, imageBase64, question } = req.body;
     if (!imageBase64 || !question) {
       res.status(400).json({ error: "Cropped image and question are required." });
       return;
     }
 
-    const ai = getGenAIClient();
+    const ai = getGenAIClient(apiKey);
 
     // Strip data:image/png;base64, prefix if present
     const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, "");
@@ -809,13 +877,19 @@ Pedagogical & Formatting Rules (Feynman Technique):
 // 6. Topic-Restricted Graph & Concept Q&A Chat
 app.post("/api/chat", async (req, res) => {
   try {
+    const apiKey = extractApiKey(req);
+    if (!apiKey) {
+      res.status(401).json({ error: "Gemini API key is required. Please set your key in the app." });
+      return;
+    }
+
     const { unit, chapter, subtopic, question, history, currentGraphState } = req.body;
     if (!question) {
       res.status(400).json({ error: "Question is required" });
       return;
     }
 
-    const ai = getGenAIClient();
+    const ai = getGenAIClient(apiKey);
 
     const historyContext =
       Array.isArray(history) && history.length > 0

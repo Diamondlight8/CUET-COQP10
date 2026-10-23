@@ -29,6 +29,7 @@ import {
   X,
   Play,
   Scissors,
+  LogOut,
 } from "lucide-react";
 import {
   SYLLABUS_TREE,
@@ -51,6 +52,17 @@ import {
   PlotlyEconomicModel,
   SliderValuesMap,
 } from "./components/InteractiveEconLab";
+import { GatekeeperScreen } from "./components/GatekeeperScreen";
+import {
+  fetchStudyBlueprint,
+  fetchMicroConceptExpansion,
+  fetchPlotlyModel,
+  fetchConceptVideos,
+  fetchSubtopicPyqs,
+  fetchInlineTutor,
+  fetchVisionTutor,
+  fetchChat,
+} from "./services/geminiService";
 
 declare global {
   interface Window {
@@ -120,6 +132,7 @@ interface VisionModalState {
 
 const ACTIVE_PROFILE_SEED_KEY = "cuet_coqp10_active_seed";
 const THEME_STORAGE_KEY = "cuet_coqp10_theme_mode";
+const GEMINI_API_KEY_STORAGE_KEY = "cuet_coqp10_gemini_api_key";
 const DEFAULT_SEED_TOKEN = "cuet-pg-coqp10-default-scholar";
 
 async function computeSha256ProfileId(input: string): Promise<string> {
@@ -165,6 +178,15 @@ function extractSelectionWithLatex(sel: Selection): string {
 }
 
 export default function App() {
+  // Check localStorage for saved Gemini API key
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(() => {
+    const saved =
+      localStorage.getItem(GEMINI_API_KEY_STORAGE_KEY) ||
+      localStorage.getItem("gemini_api_key") ||
+      "";
+    return saved.trim();
+  });
+
   // Light / Dark Theme Mode (persisted in localStorage)
   const [themeMode, setThemeMode] = useState<"dark" | "light">(() => {
     const saved = localStorage.getItem(THEME_STORAGE_KEY);
@@ -347,6 +369,23 @@ export default function App() {
       setStatusToast((prev) => (prev === msg ? null : prev));
     }, 3200);
   }, []);
+
+  const handleClearApiKey = useCallback(() => {
+    localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
+    localStorage.removeItem("gemini_api_key");
+    setGeminiApiKey("");
+    showNotification("Logged out & API key cleared from browser");
+  }, [showNotification]);
+
+  const handleSaveApiKey = useCallback(
+    (key: string) => {
+      const clean = key.trim();
+      localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, clean);
+      setGeminiApiKey(clean);
+      showNotification("Gemini API key saved to local storage");
+    },
+    [showNotification]
+  );
 
   // Flatten all subtopics for progress metrics
   const allSubtopicsList = useMemo(() => {
@@ -560,27 +599,20 @@ export default function App() {
     });
 
     try {
-      const response = await fetch("/api/inline-tutor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          unit: selectedUnit,
-          chapter: selectedChapter,
-          subtopic: selectedSubtopic,
-          selectedText: targetText,
-          question: questionText,
-        }),
+      const answer = await fetchInlineTutor({
+        unit: selectedUnit,
+        chapter: selectedChapter,
+        subtopic: selectedSubtopic,
+        selectedText: targetText,
+        question: questionText,
+        apiKey: geminiApiKey,
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to fetch inline explanation.");
-      }
 
       setInlineTutorPopover((prev) =>
         prev
           ? {
               ...prev,
-              answer: data.answer,
+              answer,
               isLoading: false,
             }
           : null
@@ -710,27 +742,20 @@ export default function App() {
     );
 
     try {
-      const response = await fetch("/api/vision-tutor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          unit: selectedUnit,
-          chapter: selectedChapter,
-          subtopic: selectedSubtopic,
-          imageBase64: visionModal.croppedImageBase64,
-          question: visionModal.question.trim(),
-        }),
+      const answer = await fetchVisionTutor({
+        unit: selectedUnit,
+        chapter: selectedChapter,
+        subtopic: selectedSubtopic,
+        imageBase64: visionModal.croppedImageBase64,
+        question: visionModal.question.trim(),
+        apiKey: geminiApiKey,
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to analyze cropped region.");
-      }
 
       setVisionModal((prev) =>
         prev
           ? {
               ...prev,
-              answer: data.answer,
+              answer,
               isLoading: false,
               isSaved: false,
             }
@@ -837,18 +862,12 @@ export default function App() {
 
       try {
         // PASS 1: Generate the ordered Micro-Concept Blueprint JSON
-        const blueprintRes = await fetch("/api/study-blueprint", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ unit, chapter, subtopic }),
-        });
-
-        const blueprintData = await blueprintRes.json();
-        if (!blueprintRes.ok) {
-          throw new Error(
-            blueprintData.error || "Failed to generate Pass-1 study blueprint."
-          );
-        }
+        const blueprintData = await fetchStudyBlueprint(
+          unit,
+          chapter,
+          subtopic,
+          geminiApiKey
+        );
 
         const microConcepts: BlueprintMicroConcept[] = Array.isArray(
           blueprintData.microConcepts
@@ -884,26 +903,17 @@ export default function App() {
 
         // PASS 2: Map the Blueprint micro-concepts to concurrent API promises and execute simultaneously via Promise.allSettled
         const expansionPromises = microConcepts.map((mc, index) =>
-          fetch("/api/expand-micro-concept", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              unit,
-              chapter,
-              subtopic,
-              index,
-              id: mc.id || `mc_${index}`,
-              title: mc.title,
-              focusPrompt: mc.focusPrompt,
-            }),
+          fetchMicroConceptExpansion({
+            unit,
+            chapter,
+            subtopic,
+            index,
+            id: mc.id || `mc_${index}`,
+            title: mc.title,
+            focusPrompt: mc.focusPrompt,
+            apiKey: geminiApiKey,
           })
-            .then(async (res) => {
-              const chunkJson = await res.json();
-              if (!res.ok) {
-                throw new Error(
-                  chunkJson.error || `Failed to expand micro-concept #${index + 1}`
-                );
-              }
+            .then((chunk) => {
               const resolvedTime = new Date().toLocaleTimeString([], {
                 hour: "2-digit",
                 minute: "2-digit",
@@ -931,20 +941,7 @@ export default function App() {
                 };
               });
 
-              return {
-                index,
-                id: mc.id || `mc_${index}`,
-                title: mc.title,
-                deepExplanation: chunkJson.deepExplanation || "",
-                derivation: chunkJson.derivation || {
-                  title: mc.title,
-                  latex: "",
-                  explanation: "",
-                },
-                keyPoints: Array.isArray(chunkJson.keyPoints)
-                  ? chunkJson.keyPoints
-                  : [],
-              } as ExpandedMicroConceptChunk;
+              return chunk;
             })
             .catch((err) => {
               setLiveChecklistByTopic((prev) => {
@@ -1038,7 +1035,7 @@ export default function App() {
         setGeneratingTopicId((prev) => (prev === subtopic ? null : prev));
       }
     },
-    [cachedYoutube, showNotification]
+    [geminiApiKey, cachedYoutube, showNotification]
   );
 
   // 2. On-Demand Textbook Economic Graph Generator (Scoped by subtopicId)
@@ -1052,20 +1049,12 @@ export default function App() {
     setLastShiftNote(undefined);
 
     try {
-      const response = await fetch("/api/generate-plotly-model", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          unit: targetUnit,
-          chapter: targetChapter,
-          subtopic: targetSubtopic,
-        }),
-      });
-
-      const data: PlotlyEconomicModel = await response.json();
-      if (!response.ok) {
-        throw new Error((data as any).error || "Failed to generate Plotly model.");
-      }
+      const data: PlotlyEconomicModel = await fetchPlotlyModel(
+        targetUnit,
+        targetChapter,
+        targetSubtopic,
+        geminiApiKey
+      );
 
       if (data.isGraphCanonical === false) {
         const nonCanonicalPayload: PlotlyEconomicModel = {
@@ -1123,7 +1112,7 @@ export default function App() {
         return next;
       });
     }
-  }, [selectedUnit, selectedChapter, selectedSubtopic, showNotification]);
+  }, [geminiApiKey, selectedUnit, selectedChapter, selectedSubtopic, showNotification]);
 
   const handleDeleteModelCache = useCallback(() => {
     setCachedModels((prev) => {
@@ -1152,23 +1141,16 @@ export default function App() {
       setGeneratingVideosByTopic((prev) => ({ ...prev, [targetSubtopic]: true }));
       setVideosErrorByTopic((prev) => ({ ...prev, [targetSubtopic]: null }));
       try {
-        const response = await fetch("/api/concept-videos", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            unit: targetUnit,
-            chapter: targetChapter,
-            subtopic: targetSubtopic,
-          }),
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.error || "Failed to generate concept videos.");
-        }
-        if (Array.isArray(data.youtubeQueries)) {
+        const queries = await fetchConceptVideos(
+          targetUnit,
+          targetChapter,
+          targetSubtopic,
+          geminiApiKey
+        );
+        if (Array.isArray(queries) && queries.length > 0) {
           setCachedYoutube((prev) => ({
             ...prev,
-            [targetSubtopic]: data.youtubeQueries,
+            [targetSubtopic]: queries,
           }));
           showNotification("Concept video links generated & cached");
         }
@@ -1186,6 +1168,7 @@ export default function App() {
       }
     }
   }, [
+    geminiApiKey,
     showConceptVideos,
     cachedYoutube,
     selectedUnit,
@@ -1220,26 +1203,15 @@ export default function App() {
 
       setGeneratingPyqsByTopic((prev) => ({ ...prev, [targetSubtopic]: true }));
       try {
-        const response = await fetch("/api/subtopic-pyqs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            unit: targetUnit,
-            chapter: targetChapter,
-            subtopic: targetSubtopic,
-            searchQuery: queryToUse,
-          }),
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(
-            data.error || "Failed to fetch sub-topic PYQs and verification questions."
-          );
-        }
-        const incomingQuestions = Array.isArray(data.questions)
-          ? data.questions
-          : [];
-        if (incomingQuestions.length > 0) {
+        const incomingQuestions = await fetchSubtopicPyqs(
+          targetUnit,
+          targetChapter,
+          targetSubtopic,
+          queryToUse,
+          geminiApiKey
+        );
+
+        if (Array.isArray(incomingQuestions) && incomingQuestions.length > 0) {
           setCachedNotes((prev) => {
             const currentNote = prev[targetSubtopic];
             if (!currentNote) return prev;
@@ -1279,7 +1251,7 @@ export default function App() {
         });
       }
     },
-    [selectedUnit, selectedChapter, selectedSubtopic, pyqSearchQuery, showNotification]
+    [geminiApiKey, selectedUnit, selectedChapter, selectedSubtopic, pyqSearchQuery, showNotification]
   );
 
   const toggleSubtopicCompletion = (subtopic: string, e?: React.MouseEvent) => {
@@ -1503,28 +1475,21 @@ export default function App() {
     setChatLoadingByTopic((prev) => ({ ...prev, [targetSubtopic]: true }));
 
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          unit: targetUnit,
-          chapter: targetChapter,
-          subtopic: targetSubtopic,
-          question: trimmed,
-          history: currentThread,
-          currentGraphState: activeModel
-            ? {
-                modelTitle: activeModel.title,
-                sliders: activeModel.parameterSliders,
-                currentSliderValues: activeSliderValues,
-              }
-            : null,
-        }),
+      const data = await fetchChat({
+        unit: targetUnit,
+        chapter: targetChapter,
+        subtopic: targetSubtopic,
+        question: trimmed,
+        history: currentThread,
+        currentGraphState: activeModel
+          ? {
+              modelTitle: activeModel.title,
+              sliders: activeModel.parameterSliders,
+              currentSliderValues: activeSliderValues,
+            }
+          : null,
+        apiKey: geminiApiKey,
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to fetch answer");
-      }
 
       let shiftSummary: string | undefined;
       if (data.sliderAdjustments && data.sliderAdjustments.applied) {
@@ -1605,6 +1570,11 @@ export default function App() {
   const borderCol = isLightMode ? "border-[#e5e7eb]" : "border-[#222222]";
   const mutedText = isLightMode ? "text-gray-600" : "text-neutral-400";
   const bodyProseText = isLightMode ? "text-gray-800" : "text-neutral-200";
+
+  // Gatekeeper Screen: If no valid key is found in localStorage, block access to the main app
+  if (!geminiApiKey) {
+    return <GatekeeperScreen onSaveKey={handleSaveApiKey} />;
+  }
 
   return (
     <div
@@ -2102,13 +2072,24 @@ export default function App() {
           />
         </div>
 
-        {/* Zone 3: Theme Toggle & SHA-256 Profile Action */}
+        {/* Zone 3: Theme Toggle, Profile & Logout / Clear Key Action */}
         <div className="flex items-center gap-2.5 shrink-0">
           {statusToast && (
             <span className="hidden lg:inline-block text-xs font-mono text-[#10b981] whitespace-nowrap">
               {statusToast}
             </span>
           )}
+
+          <button
+            type="button"
+            onClick={handleClearApiKey}
+            className={`px-3 py-1.5 text-xs font-medium border rounded transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${bgNested} hover:border-red-500/80 hover:text-red-400`}
+            title="Clear saved Gemini API key and return to login screen"
+          >
+            <LogOut className="w-3.5 h-3.5 text-red-400" />
+            <span className="hidden sm:inline">Logout / Clear Key</span>
+            <span className="sm:hidden">Logout</span>
+          </button>
 
           <button
             type="button"
@@ -4246,6 +4227,24 @@ export default function App() {
                 <div className="flex justify-between">
                   <span className={mutedText}>Saved Tutor Q&As:</span>
                   <span className="font-mono">{pinnedInlineTutor.length}</span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-neutral-800">
+                  <span className={mutedText}>Gemini API Key:</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-[#10b981]">
+                      {geminiApiKey ? `${geminiApiKey.slice(0, 6)}...${geminiApiKey.slice(-4)}` : "None"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileModalOpen(false);
+                        handleClearApiKey();
+                      }}
+                      className="text-xs text-red-400 hover:underline cursor-pointer"
+                    >
+                      Clear Key
+                    </button>
+                  </div>
                 </div>
               </div>
 
